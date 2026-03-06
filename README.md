@@ -1,0 +1,180 @@
+# EasyLLM
+
+轻量级 AI 多平台账号管理与代理工具，Go + Vue 3 全栈，全 Web 界面操作。
+
+[![GitHub](https://img.shields.io/badge/GitHub-EasyLLM-blue?logo=github)](https://github.com/libaxuan/EasyLLM)
+
+## 功能特性
+
+**多平台账号管理**
+- **OpenAI / Codex** — OAuth 账号管理、API Key 配置、Token 刷新、配额查询、Codex CLI 一键切换
+- **Augment** — OAuth 登录、Session 批量导入、状态检测、额度查询、Session 刷新
+- **Cursor** — 多账号管理，一键切换活跃账号
+- **Windsurf** — 账号导入与激活切换
+- **Antigravity** — 账号管理与激活
+- **Claude** — Session Key 管理
+
+**Codex 代理池**
+- OpenAI 兼容 API（`/v1/responses`），多账号自动负载均衡
+- 支持 round_robin / random / least_used 三种策略
+- WebSocket 代理支持（Codex CLI wss 连接）
+- 请求日志与 Token 用量统计看板
+- API Key 鉴权保护
+
+**系统能力**
+- 全 Web 操作界面，暗色主题
+- SQLite / PostgreSQL 双数据库支持
+- HTTP 代理转发、IP 黑名单
+- Docker 一键部署
+- 内置使用文档
+
+## 快速开始
+
+### 方式一：直接运行
+
+**前置要求：** Go 1.22+、Node.js 18+、gcc（SQLite CGO 依赖）
+
+```bash
+git clone https://github.com/libaxuan/EasyLLM.git
+cd EasyLLM
+
+# 1. 构建前端
+cd web && npm install && npm run build && cd ..
+
+# 2. 配置（可选）
+cp .env.example .env
+
+# 3. 编译并运行
+CGO_ENABLED=1 go build -o easyllm .
+./easyllm
+```
+
+访问 http://localhost:8021
+
+### 方式二：Docker 部署
+
+```bash
+git clone https://github.com/libaxuan/EasyLLM.git
+cd EasyLLM
+docker compose up -d
+```
+
+访问 http://localhost:8021
+
+### 方式三：构建脚本
+
+```bash
+./scripts/build.sh
+./easyllm
+```
+
+## 配置
+
+复制 `.env.example` 为 `.env` 并按需修改：
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `SERVER_PORT` | `8021` | 服务端口 |
+| `SERVER_HOST` | `0.0.0.0` | 监听地址 |
+| `DB_TYPE` | `sqlite` | 数据库类型（sqlite / postgres） |
+| `DB_SQLITE_PATH` | `./data/easyllm.db` | SQLite 文件路径 |
+| `DB_DSN` | - | PostgreSQL 连接字符串 |
+| `DATA_DIR` | `./data` | 数据目录 |
+| `SECRET_KEY` | - | 应用密钥（生产环境务必修改） |
+| `DEBUG` | `false` | 调试模式 |
+| `PROXY_ENABLED` | `false` | HTTP 代理开关 |
+| `PROXY_HOST` | - | 代理主机 |
+| `PROXY_PORT` | - | 代理端口 |
+| `LOG_ENABLED` | `true` | 请求日志开关 |
+
+## Codex CLI 接入
+
+**OAuth 账号（推荐）：** 在 Web 界面添加 OAuth 账号后点击"切换"，自动写入 `~/.codex/auth.json` 并注入 `chatgpt_base_url`。
+
+**代理池模式：** 启用多个账号的代理开关后，在 `~/.codex/config.toml` 中配置：
+
+```toml
+chatgpt_base_url = "http://localhost:8021"
+```
+
+Codex CLI 的所有请求将自动通过 EasyLLM 轮询池中的账号。
+
+## API 参考
+
+### 代理端点（OpenAI 兼容）
+
+```
+POST /v1/responses              — Codex Responses API（流式）
+GET  /v1/models                 — 获取模型列表
+GET  /pool/status               — 代理池状态
+```
+
+### cURL 示例
+
+```bash
+# 发送请求（通过代理池）
+curl http://localhost:8021/v1/responses \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{"model":"gpt-5.1-codex","input":"hello","stream":true}'
+
+# 查看代理池状态
+curl http://localhost:8021/pool/status
+```
+
+### 管理 API
+
+```
+GET  /api/v1/openai/accounts              — OpenAI 账号列表
+POST /api/v1/openai/import/refresh-tokens — 批量导入 refresh_token
+POST /api/v1/openai/import/scan-dir       — 扫描目录导入 token 文件
+POST /api/v1/openai/accounts/fetch-quotas — 批量查询配额
+GET  /api/v1/augment/tokens               — Augment Token 列表
+POST /api/import/session                  — 导入 Augment Session
+POST /api/import/sessions                 — 批量导入 Augment Sessions
+GET  /api/v1/health                       — 健康检查
+GET  /api/v1/system/info                  — 系统信息
+```
+
+## 技术栈
+
+| 层 | 技术 |
+|---|---|
+| 后端 | Go 1.25、Gin、GORM |
+| 前端 | Vue 3、Vite 6、Tailwind CSS |
+| 数据库 | SQLite / PostgreSQL |
+| 部署 | Docker、Docker Compose |
+
+## 项目结构
+
+```
+EasyLLM/
+├── main.go                     # 入口
+├── config/                     # 配置加载
+├── internal/
+│   ├── models/                 # 数据模型
+│   ├── storage/                # 数据存储层
+│   ├── handlers/               # HTTP 路由处理
+│   ├── platforms/              # 平台业务逻辑
+│   │   ├── augment/            # Augment OAuth & API
+│   │   └── openai/             # OpenAI OAuth & 配额
+│   ├── proxy/                  # Codex 代理 & WebSocket
+│   └── server/                 # HTTP 服务器
+├── web/                        # Vue 3 前端
+│   ├── src/
+│   │   ├── views/              # 页面组件
+│   │   ├── api/                # API 封装
+│   │   └── router/             # 路由
+│   └── dist/                   # 构建产物
+├── scripts/build.sh            # 构建脚本
+├── Dockerfile
+└── .env.example
+```
+
+## License
+
+MIT
+
+## Links
+
+- **GitHub:** https://github.com/libaxuan/EasyLLM

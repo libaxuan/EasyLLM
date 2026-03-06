@@ -1,0 +1,34 @@
+# Binaries
+easyllm
+easyllm_new
+*.exe
+
+# Environment
+.env
+
+# Data
+data/
+*.db
+
+# Auth tokens
+auth/*.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Node
+web/node_modules/
+web/dist/
+
+# Temp/backup files
+*.bak
+*.tmp
+*.tmp2
+*_new.vue
+OpenAI账号显示优化说明.md
+功能对齐报告.md
