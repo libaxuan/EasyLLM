@@ -1,5 +1,8 @@
 <template>
-  <div class="flex h-screen overflow-hidden bg-gray-950">
+  <div v-if="$route.path === '/login'" class="h-screen">
+    <router-view />
+  </div>
+  <div v-else class="flex h-screen overflow-hidden bg-gray-950">
     <!-- Sidebar -->
     <aside class="w-56 flex-shrink-0 bg-gray-900 border-r border-gray-800 flex flex-col">
       <!-- Logo -->
@@ -44,8 +47,8 @@
         </router-link>
       </nav>
 
-      <!-- API Server Status -->
-      <div class="p-3 border-t border-gray-800">
+      <!-- Bottom: Server Status + Logout -->
+      <div class="p-3 border-t border-gray-800 space-y-2">
         <div class="flex items-center justify-between text-xs">
           <span class="text-gray-500">API Server</span>
           <div class="flex items-center gap-1">
@@ -53,6 +56,10 @@
             <span class="text-gray-400">:{{ serverPort }}</span>
           </div>
         </div>
+        <button v-if="isLoggedIn" @click="handleLogout"
+          class="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs text-gray-400 hover:text-red-400 hover:bg-gray-800 rounded-lg transition-colors">
+          <span>🚪</span><span>退出登录</span>
+        </button>
       </div>
     </aside>
 
@@ -81,8 +88,11 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, provide } from 'vue'
-import { settingsAPI } from './api'
+import { ref, computed, onMounted, onUnmounted, provide } from 'vue'
+import { useRouter } from 'vue-router'
+import { settingsAPI, authAPI } from './api'
+
+const router = useRouter()
 
 const platformRoutes = [
   { path: '/openai', icon: '🤖', label: 'OpenAI / Codex' },
@@ -115,6 +125,14 @@ function showNotification(message, type = 'info') {
 }
 
 provide('notify', showNotification)
+
+const isLoggedIn = computed(() => !!localStorage.getItem('easyllm_token'))
+
+async function handleLogout() {
+  try { await authAPI.logout() } catch { /* ignore */ }
+  localStorage.removeItem('easyllm_token')
+  router.push('/login')
+}
 
 async function checkServerStatus() {
   try {

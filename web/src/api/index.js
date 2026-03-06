@@ -16,22 +16,42 @@ const longApi = axios.create({
   }
 })
 
-longApi.interceptors.response.use(
-  response => response.data,
-  error => {
-    const message = error.response?.data?.error || error.message || 'Unknown error'
-    return Promise.reject(new Error(message))
+function attachToken(config) {
+  const token = localStorage.getItem('easyllm_token')
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
   }
-)
+  return config
+}
 
-// Response interceptor for error handling
-api.interceptors.response.use(
-  response => response.data,
-  error => {
-    const message = error.response?.data?.error || error.message || 'Unknown error'
-    return Promise.reject(new Error(message))
+api.interceptors.request.use(attachToken)
+longApi.interceptors.request.use(attachToken)
+
+function handleResponseError(error) {
+  if (error.response?.status === 401) {
+    const path = window.location.pathname
+    if (path !== '/login') {
+      localStorage.removeItem('easyllm_token')
+      window.location.href = '/login'
+    }
   }
-)
+  const message = error.response?.data?.error || error.message || 'Unknown error'
+  return Promise.reject(new Error(message))
+}
+
+longApi.interceptors.response.use(response => response.data, handleResponseError)
+api.interceptors.response.use(response => response.data, handleResponseError)
+
+// Auth API (uses raw axios to avoid redirect loops)
+const rawApi = axios.create({ baseURL: '/api/v1', timeout: 10000, headers: { 'Content-Type': 'application/json' } })
+
+export const authAPI = {
+  check: () => rawApi.get('/auth/check').then(r => r.data),
+  login: (password) => rawApi.post('/auth/login', { password }).then(r => r.data),
+  setup: (password) => rawApi.post('/auth/setup', { password }).then(r => r.data),
+  logout: () => api.post('/auth/logout'),
+  changePassword: (old_password, new_password) => api.post('/auth/change-password', { old_password, new_password }),
+}
 
 // Augment API
 export const augmentAPI = {

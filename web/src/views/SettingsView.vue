@@ -244,12 +244,40 @@
         </div>
       </div>
     </div>
+
+    <!-- Security Settings -->
+    <div v-if="activeTab === 'security'" class="space-y-4">
+      <div class="card p-4">
+        <h3 class="font-medium text-white mb-4">访问密码</h3>
+        <p class="text-gray-500 text-xs mb-4">设置访问密码后，所有操作需先登录。修改后当前会话保持有效。</p>
+        <div class="space-y-3 max-w-md">
+          <div v-if="hasPassword">
+            <label class="label">当前密码</label>
+            <input v-model="pwForm.oldPassword" type="password" class="input" placeholder="输入当前密码" />
+          </div>
+          <div>
+            <label class="label">{{ hasPassword ? '新密码' : '设置密码' }}</label>
+            <input v-model="pwForm.newPassword" type="password" class="input" placeholder="至少 4 位" />
+          </div>
+          <div>
+            <label class="label">确认{{ hasPassword ? '新' : '' }}密码</label>
+            <input v-model="pwForm.confirmPassword" type="password" class="input" placeholder="再次输入" />
+          </div>
+          <div v-if="pwError" class="text-red-400 text-sm bg-red-900/30 rounded-lg px-3 py-2">{{ pwError }}</div>
+        </div>
+        <div class="flex justify-end mt-4">
+          <button @click="savePassword" class="btn btn-primary" :disabled="pwSaving">
+            {{ pwSaving ? '保存中...' : hasPassword ? '修改密码' : '设置密码' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, inject } from 'vue'
-import { settingsAPI } from '@/api'
+import { settingsAPI, authAPI } from '@/api'
 
 const notify = inject('notify')
 const activeTab = ref('switches')
@@ -258,6 +286,7 @@ const tabs = [
   { id: 'switches', label: '功能开关' },
   { id: 'system', label: '系统信息' },
   { id: 'database', label: '数据库' },
+  { id: 'security', label: '安全' },
 ]
 
 const sysInfo = ref({ version: '-', db_type: '-', server_port: 8021, proxy_enabled: false, log_enabled: true, ip_blacklist_enabled: false })
@@ -376,5 +405,55 @@ async function saveDatabase() {
   } catch (e) { notify(e.message, 'error') }
 }
 
-onMounted(loadAll)
+const hasPassword = ref(false)
+const pwForm = ref({ oldPassword: '', newPassword: '', confirmPassword: '' })
+const pwError = ref('')
+const pwSaving = ref(false)
+
+async function checkPasswordStatus() {
+  try {
+    const data = await authAPI.check()
+    hasPassword.value = data.password_set
+  } catch { /* ignore */ }
+}
+
+async function savePassword() {
+  pwError.value = ''
+  if (!pwForm.value.newPassword || pwForm.value.newPassword.length < 4) {
+    pwError.value = '密码至少 4 位'
+    return
+  }
+  if (pwForm.value.newPassword !== pwForm.value.confirmPassword) {
+    pwError.value = '两次密码不一致'
+    return
+  }
+
+  pwSaving.value = true
+  try {
+    if (hasPassword.value) {
+      if (!pwForm.value.oldPassword) {
+        pwError.value = '请输入当前密码'
+        pwSaving.value = false
+        return
+      }
+      await authAPI.changePassword(pwForm.value.oldPassword, pwForm.value.newPassword)
+      notify('密码已修改', 'success')
+    } else {
+      const data = await authAPI.setup(pwForm.value.newPassword)
+      if (data.token) localStorage.setItem('easyllm_token', data.token)
+      notify('密码已设置，已自动登录', 'success')
+    }
+    hasPassword.value = true
+    pwForm.value = { oldPassword: '', newPassword: '', confirmPassword: '' }
+  } catch (e) {
+    pwError.value = e.message || '操作失败'
+  } finally {
+    pwSaving.value = false
+  }
+}
+
+onMounted(() => {
+  loadAll()
+  checkPasswordStatus()
+})
 </script>

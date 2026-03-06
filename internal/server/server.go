@@ -24,6 +24,7 @@ import (
 // App holds all application dependencies
 type App struct {
 	cfg            *config.Config
+	auth           *handlers.AuthHandler
 	augment        *handlers.AugmentHandler
 	openai         *handlers.OpenAIHandler
 	cursor         *handlers.CursorHandler
@@ -75,6 +76,7 @@ func New(cfg *config.Config) (*App, error) {
 	// Build handlers
 	app := &App{
 		cfg:            cfg,
+		auth:           handlers.NewAuthHandler(),
 		augment:        handlers.NewAugmentHandler(augmentStore),
 		openai:         handlers.NewOpenAIHandler(openaiStore, codexStore),
 		cursor:         handlers.NewCursorHandler(cursorStore),
@@ -116,14 +118,21 @@ func (a *App) setupRouter() {
 	// API routes
 	api := r.Group("/api/v1")
 
-	// Register platform handlers
-	a.augment.RegisterRoutes(api)
-	a.openai.RegisterRoutes(api)
-	a.cursor.RegisterRoutes(api)
-	a.windsurf.RegisterRoutes(api)
-	a.antigravity.RegisterRoutes(api)
-	a.claude.RegisterRoutes(api)
-	a.settings.RegisterRoutes(api)
+	// Public auth routes (login/setup/check — no token needed)
+	a.auth.RegisterRoutes(api)
+
+	// Protected routes — require valid JWT when password is set
+	protected := r.Group("/api/v1")
+	protected.Use(handlers.AuthMiddleware())
+
+	a.auth.RegisterProtectedRoutes(protected)
+	a.augment.RegisterRoutes(protected)
+	a.openai.RegisterRoutes(protected)
+	a.cursor.RegisterRoutes(protected)
+	a.windsurf.RegisterRoutes(protected)
+	a.antigravity.RegisterRoutes(protected)
+	a.claude.RegisterRoutes(protected)
+	a.settings.RegisterRoutes(protected)
 
 	// Legacy API endpoint (compatible with original ATM API)
 	legacy := r.Group("/api")

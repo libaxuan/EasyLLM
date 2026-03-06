@@ -6,6 +6,12 @@ const routes = [
     redirect: '/dashboard'
   },
   {
+    path: '/login',
+    name: 'login',
+    component: () => import('@/views/LoginView.vue'),
+    meta: { title: '登录', public: true }
+  },
+  {
     path: '/dashboard',
     name: 'dashboard',
     component: () => import('@/views/DashboardView.vue'),
@@ -64,6 +70,20 @@ const routes = [
 const router = createRouter({
   history: createWebHistory(),
   routes
+})
+
+router.beforeEach(async (to, from, next) => {
+  if (to.meta.public) {
+    next()
+    return
+  }
+
+  const token = localStorage.getItem('easyllm_token')
+  if (!token) {
+    next('/login')
+    return
+  }
+  next()
 })
 
 export default router
