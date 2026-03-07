@@ -64,16 +64,29 @@
           <div class="text-xs text-gray-500">
             <span v-if="quotaLastFetched">配额更新于 {{ quotaLastFetched }}</span>
           </div>
-          <button
-            @click="fetchQuotas"
-            :disabled="fetchingQuotas"
-            class="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 rounded-lg text-xs transition-colors disabled:opacity-40"
-          >
-            <svg class="w-3.5 h-3.5" :class="fetchingQuotas ? 'animate-spin' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-            </svg>
-            {{ fetchingQuotas ? '查询中...' : '查询配额' }}
-          </button>
+          <div class="flex items-center gap-2">
+            <button
+              @click="refreshTokensCurrentPage"
+              :disabled="refreshingPageTokens || paginatedOAuth.length === 0"
+              class="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 rounded-lg text-xs transition-colors disabled:opacity-40"
+              title="刷新当前页账号的 Token"
+            >
+              <svg class="w-3.5 h-3.5" :class="refreshingPageTokens ? 'animate-spin' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+              </svg>
+              {{ refreshingPageTokens ? '刷新中...' : '刷新 Token' }}
+            </button>
+            <button
+              @click="fetchQuotas"
+              :disabled="fetchingQuotas"
+              class="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 rounded-lg text-xs transition-colors disabled:opacity-40"
+            >
+              <svg class="w-3.5 h-3.5" :class="fetchingQuotas ? 'animate-spin' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+              </svg>
+              {{ fetchingQuotas ? '查询中...' : '查询配额' }}
+            </button>
+          </div>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
           <div
@@ -559,11 +572,22 @@
             </svg>
             服务配置
           </h2>
-          <button @click="showServiceConfigDialog = false" class="text-gray-400 hover:text-white">
+          <div class="flex items-center gap-2">
+            <button
+              @click="exportAccounts"
+              class="flex items-center gap-1.5 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg text-sm transition-colors"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+              </svg>
+              导出账号
+            </button>
+            <button @click="showServiceConfigDialog = false" class="text-gray-400 hover:text-white">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
             </svg>
           </button>
+          </div>
         </div>
         <div class="p-6 space-y-5 max-h-[80vh] overflow-y-auto">
 
@@ -740,6 +764,7 @@ function copyText(text) {
 }
 const switchingId = ref(null)
 const refreshingId = ref(null)
+const refreshingPageTokens = ref(false)
 const togglingProxyId = ref(null)
 const togglingProxyAll = ref(false)
 const fetchingQuotas = ref(false)
@@ -886,13 +911,39 @@ async function switchAPIAccount(account) {
   }
 }
 
+async function refreshTokensCurrentPage() {
+  const pageAccounts = paginatedOAuth.value
+  if (pageAccounts.length === 0) {
+    showToast('当前页没有账号', 'error')
+    return
+  }
+  refreshingPageTokens.value = true
+  let ok = 0
+  let fail = 0
+  for (const account of pageAccounts) {
+    try {
+      await api.post(`/openai/accounts/${account.id}/refresh-token`)
+      ok++
+    } catch {
+      fail++
+    }
+  }
+  refreshingPageTokens.value = false
+  if (fail === 0) {
+    showToast(`已刷新当前页 ${ok} 个账号`, 'success')
+    await loadAccounts()
+  } else {
+    showToast(`刷新完成：成功 ${ok}，失败 ${fail}`, fail === pageAccounts.length ? 'error' : 'success')
+    if (ok > 0) await loadAccounts()
+  }
+}
+
 async function refreshToken(account) {
   refreshingId.value = account.id
   try {
-    const res = await api.post(`/openai/accounts/${account.id}/refresh-token`)
-    const idx = accounts.value.findIndex(a => a.id === account.id)
-    if (idx >= 0) accounts.value[idx] = res
+    await api.post(`/openai/accounts/${account.id}/refresh-token`)
     showToast(`${account.email} token 刷新成功`, 'success')
+    await loadAccounts()
   } catch (e) {
     showToast('刷新失败: ' + e.message, 'error')
   } finally {
@@ -1218,6 +1269,39 @@ async function loadServiceConfig() {
 async function openServiceConfig() {
   showServiceConfigDialog.value = true
   await loadServiceConfig()
+}
+
+function exportAccounts() {
+  const oauthList = oauthAccounts.value.map(a => ({
+    email: a.email,
+    refresh_token: a.refresh_token || '',
+    access_token: a.access_token || '',
+    id_token: a.id_token || '',
+    chatgpt_account_id: a.chatgpt_account_id || '',
+  }))
+  const payload = {
+    exported_at: new Date().toISOString(),
+    _usage: '换设备后：OAuth 用 refresh_tokens 数组批量导入；API 用 api_accounts 逐条添加。请妥善保管此文件。',
+    refresh_tokens: oauthList.map(a => a.refresh_token).filter(Boolean),
+    oauth_accounts: oauthList,
+    api_accounts: apiAccounts.value.map(a => ({
+      model_provider: a.model_provider || '',
+      model: a.model || '',
+      base_url: a.base_url || '',
+      api_key: a.api_key || '',
+      wire_api: a.wire_api || 'responses',
+      model_reasoning_effort: a.model_reasoning_effort || '',
+      proxy_enabled: a.proxy_enabled,
+    })),
+  }
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `easyllm-accounts-${new Date().toISOString().slice(0, 10)}.json`
+  a.click()
+  URL.revokeObjectURL(url)
+  showToast('账号已导出，请妥善保管', 'success')
 }
 
 async function toggleServiceProxyPool() {
