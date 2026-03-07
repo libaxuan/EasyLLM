@@ -116,7 +116,7 @@ GET  /pool/status               — 代理池状态
 curl http://localhost:8021/v1/responses \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_API_KEY" \
-  -d '{"model":"gpt-5.1-codex","input":"hello","stream":true}'
+  -d '{"model":"gpt-5.4","input":"hello","stream":true}'
 
 # 查看代理池状态
 curl http://localhost:8021/pool/status

@@ -58,7 +58,7 @@ wire_api = "chat"</pre>
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -d '{
-    "model": "gpt-5.1-codex",
+    "model": "gpt-5.4",
     "input": "写一个快速排序算法",
     "stream": true
   }'</pre>
@@ -96,7 +96,7 @@ client = OpenAI(
 )
 
 response = client.responses.create(
-    model="gpt-5.1-codex",
+    model="gpt-5.4",
     input="用 Python 写一个 HTTP 服务器",
 )
 
@@ -267,7 +267,7 @@ const curlSnippets = {
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer YOUR_API_KEY" \\
   -d '{
-    "model": "gpt-5.1-codex",
+    "model": "gpt-5.4",
     "input": "写一个快速排序算法",
     "stream": true
   }'`,
@@ -282,7 +282,7 @@ client = OpenAI(
 )
 
 response = client.responses.create(
-    model="gpt-5.1-codex",
+    model="gpt-5.4",
     input="用 Python 写一个 HTTP 服务器",
 )
 
