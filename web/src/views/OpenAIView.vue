@@ -591,6 +591,8 @@
         </div>
         <div class="p-6 space-y-5 max-h-[80vh] overflow-y-auto">
 
+
+
           <!-- Stats Cards -->
           <div class="grid grid-cols-3 gap-3">
             <div class="bg-gray-800 rounded-xl p-4 text-center">
@@ -804,7 +806,6 @@ const apiForm = ref({
   model_reasoning_effort: ''
 })
 
-// Service Config dialog
 const showServiceConfigDialog = ref(false)
 const savingServiceConfig = ref(false)
 const showApiKey = ref(false)
@@ -1265,6 +1266,8 @@ async function loadServiceConfig() {
     console.error('Failed to load service config:', e)
   }
 }
+
+
 
 async function openServiceConfig() {
   showServiceConfigDialog.value = true

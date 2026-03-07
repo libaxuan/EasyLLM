@@ -7,6 +7,7 @@ import (
 	"easyllm/internal/storage"
 	"encoding/json"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -32,6 +33,21 @@ type openaiOAuthSession struct {
 	CodeVerifier string
 	RedirectURI  string
 	CreatedAt    time.Time
+}
+
+// openaiModelsCache 缓存 OpenAI 官方 /v1/models 结果，避免频繁请求
+var (
+	openaiModelsCacheMu   sync.Mutex
+	openaiModelsCache     []openaiModelItem
+	openaiModelsCachedAt  time.Time
+	openaiModelsCacheTTL  = time.Hour
+)
+
+type openaiModelItem struct {
+	ID      string `json:"id"`
+	Object  string `json:"object"`
+	OwnedBy string `json:"owned_by"`
+	Created int64  `json:"created,omitempty"`
 }
 
 func NewOpenAIHandler(s *storage.OpenAIStorage, cs *storage.CodexStorage) *OpenAIHandler {
@@ -105,6 +121,9 @@ func (h *OpenAIHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	// Service config (proxy pool switch, API key, stats)
 	g.GET("/service-config", h.GetServiceConfig)
 	g.PUT("/service-config", h.UpdateServiceConfig)
+
+	// OpenAI 官方模型列表（带缓存，避免频繁请求）
+	g.GET("/available-models", h.GetAvailableModels)
 }
 
 func (h *OpenAIHandler) ListAccounts(c *gin.Context) {
@@ -1422,6 +1441,94 @@ func (h *OpenAIHandler) UpdateServiceConfig(c *gin.Context) {
 	}
 
 	h.GetServiceConfig(c)
+}
+
+// GetAvailableModels 返回 OpenAI 官方 https://api.openai.com/v1/models 的模型列表，带 1 小时缓存，减少频繁调用。
+func (h *OpenAIHandler) GetAvailableModels(c *gin.Context) {
+	forceRefresh := c.Query("refresh") == "1"
+
+	openaiModelsCacheMu.Lock()
+	valid := len(openaiModelsCache) > 0 && time.Since(openaiModelsCachedAt) < openaiModelsCacheTTL
+	openaiModelsCacheMu.Unlock()
+
+	if !forceRefresh && valid {
+		openaiModelsCacheMu.Lock()
+		list := make([]openaiModelItem, len(openaiModelsCache))
+		copy(list, openaiModelsCache)
+		at := openaiModelsCachedAt
+		openaiModelsCacheMu.Unlock()
+		c.JSON(http.StatusOK, gin.H{"data": list, "cached_at": at.Format(time.RFC3339)})
+		return
+	}
+
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if apiKey == "" {
+		accounts, err := h.storage.List()
+		if err == nil {
+			for _, a := range accounts {
+				if a.AccountType == models.OpenAIAccountTypeAPI && a.APIKey != nil && *a.APIKey != "" {
+					base := ""
+					if a.BaseURL != nil {
+						base = *a.BaseURL
+					}
+					if strings.Contains(base, "openai.com") {
+						apiKey = *a.APIKey
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if apiKey == "" {
+		c.JSON(http.StatusOK, gin.H{
+			"data":      []openaiModelItem{},
+			"cached_at": time.Now().Format(time.RFC3339),
+			"message":   "未配置 OPENAI_API_KEY 或未添加 OpenAI 官方 API 账号，无法拉取模型列表",
+		})
+		return
+	}
+
+	req, err := http.NewRequest(http.MethodGet, "https://api.openai.com/v1/models", nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIError{Error: err.Error(), Code: "REQUEST_ERROR"})
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIError{Error: err.Error(), Code: "NETWORK_ERROR"})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		c.JSON(resp.StatusCode, models.APIError{
+			Error: fmt.Sprintf("OpenAI API 返回 %d: %s", resp.StatusCode, string(body)),
+			Code:  "OPENAI_ERROR",
+		})
+		return
+	}
+
+	var payload struct {
+		Data []openaiModelItem `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIError{Error: err.Error(), Code: "DECODE_ERROR"})
+		return
+	}
+
+	openaiModelsCacheMu.Lock()
+	openaiModelsCache = payload.Data
+	openaiModelsCachedAt = time.Now()
+	openaiModelsCacheMu.Unlock()
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":      payload.Data,
+		"cached_at": openaiModelsCachedAt.Format(time.RFC3339),
+	})
 }
 
 // ---- helpers ----

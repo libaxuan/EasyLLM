@@ -50,8 +50,7 @@ func (h *SettingsHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/health", h.Health)
 	rg.GET("/system/info", h.SystemInfo)
 
-	// API server status
-	rg.GET("/api-server/status", h.GetAPIServerStatus)
+	// API server status 已移至 server.go 作为公开接口注册，避免鉴权导致轮询 401
 }
 
 func (h *SettingsHandler) Health(c *gin.Context) {

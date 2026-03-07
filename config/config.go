@@ -38,9 +38,10 @@ type ProxyConfig struct {
 }
 
 type AppConfig struct {
-	DataDir   string
-	SecretKey string
-	Debug     bool
+	DataDir        string
+	SecretKey      string
+	Debug          bool
+	DefaultPassword string
 }
 
 type LogConfig struct {
@@ -78,9 +79,10 @@ func Load() *Config {
 				Password: getEnv("PROXY_PASSWORD", ""),
 			},
 			App: AppConfig{
-				DataDir:   getEnv("DATA_DIR", "./data"),
-				SecretKey: getEnv("SECRET_KEY", "easyllm-secret-key-change-in-production"),
-				Debug:     getEnvBool("DEBUG", false),
+				DataDir:         getEnv("DATA_DIR", "./data"),
+				SecretKey:       getEnv("SECRET_KEY", "easyllm-secret-key-change-in-production"),
+				Debug:           getEnvBool("DEBUG", false),
+				DefaultPassword: getEnv("DEFAULT_PASSWORD", ""),
 			},
 			Log: LogConfig{
 				Enabled: getEnvBool("LOG_ENABLED", true),

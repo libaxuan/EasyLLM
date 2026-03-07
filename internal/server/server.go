@@ -88,6 +88,11 @@ func New(cfg *config.Config) (*App, error) {
 		sessionScanner: sessionScanner,
 	}
 
+	// Initialize default password if configured
+	if err := app.auth.InitializeDefaultPassword(); err != nil {
+		return nil, fmt.Errorf("failed to initialize default password: %w", err)
+	}
+
 	app.setupRouter()
 	return app, nil
 }
@@ -120,6 +125,9 @@ func (a *App) setupRouter() {
 
 	// Public auth routes (login/setup/check — no token needed)
 	a.auth.RegisterRoutes(api)
+
+	// 公开：API 服务状态（侧栏轮询用，不鉴权，避免 401 导致反复跳登录）
+	api.GET("/api-server/status", a.settings.GetAPIServerStatus)
 
 	// Protected routes — require valid JWT when password is set
 	protected := r.Group("/api/v1")

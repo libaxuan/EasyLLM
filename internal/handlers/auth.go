@@ -23,6 +23,33 @@ func NewAuthHandler() *AuthHandler {
 	return &AuthHandler{}
 }
 
+// InitializeDefaultPassword sets up the default password on first startup if configured
+func (h *AuthHandler) InitializeDefaultPassword() error {
+	defaultPwd := config.Get().App.DefaultPassword
+	if defaultPwd == "" {
+		return nil // No default password configured
+	}
+
+	// Check if password is already set
+	_, hasPassword := storage.GetSetting("auth_password")
+	if hasPassword {
+		return nil // Password already set, skip
+	}
+
+	// Hash and save the default password
+	hash, err := bcrypt.GenerateFromPassword([]byte(defaultPwd), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash default password: %w", err)
+	}
+
+	if err := storage.SaveSetting("auth_password", string(hash)); err != nil {
+		return fmt.Errorf("failed to save default password: %w", err)
+	}
+
+	fmt.Printf("[AUTH] Default password initialized\n")
+	return nil
+}
+
 func (h *AuthHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	auth := rg.Group("/auth")
 	auth.POST("/login", h.Login)

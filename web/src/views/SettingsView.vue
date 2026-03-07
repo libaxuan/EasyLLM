@@ -118,30 +118,7 @@
         </div>
       </div>
 
-      <!-- Server Config -->
-      <div class="card p-4">
-        <h3 class="font-medium text-white mb-3">服务配置</h3>
-        <div class="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
-          <div class="flex justify-between"><span class="text-gray-400">监听地址</span><span class="text-gray-200 font-mono">{{ sysInfo.server_host || '0.0.0.0' }}:{{ sysInfo.server_port }}</span></div>
-          <div class="flex justify-between"><span class="text-gray-400">数据库</span><span class="text-gray-200">{{ (sysInfo.db_type || 'sqlite').toUpperCase() }}</span></div>
-          <div class="flex justify-between"><span class="text-gray-400">数据目录</span><span class="text-gray-200 font-mono text-xs">{{ sysInfo.data_dir || '-' }}</span></div>
-          <div class="flex justify-between"><span class="text-gray-400">调试模式</span>
-            <span :class="sysInfo.debug ? 'text-yellow-400' : 'text-gray-500'">{{ sysInfo.debug ? '已开启' : '关闭' }}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-gray-400">日志</span>
-            <span :class="sysInfo.log_enabled ? 'text-green-400' : 'text-gray-500'">{{ sysInfo.log_enabled ? '已启用' : '未启用' }}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-gray-400">HTTP 代理</span>
-            <span :class="sysInfo.proxy_enabled ? 'text-green-400' : 'text-gray-500'">{{ sysInfo.proxy_enabled ? '已启用' : '未启用' }}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-gray-400">IP 黑名单</span>
-            <span :class="sysInfo.ip_blacklist_enabled ? 'text-green-400' : 'text-gray-500'">{{ sysInfo.ip_blacklist_enabled ? '已启用' : '未启用' }}</span>
-          </div>
-        </div>
-      </div>
+
 
       <!-- Account Counts -->
       <div v-if="sysInfo.accounts" class="card p-4">

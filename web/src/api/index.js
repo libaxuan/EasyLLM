@@ -91,6 +91,8 @@ export const openaiAPI = {
   refreshCodexPool: () => api.post('/openai/codex/pool/refresh'),
   getCodexLogs: (params) => api.get('/openai/codex/logs', { params }),
   clearCodexLogs: () => api.delete('/openai/codex/logs'),
+  getAvailableModels: (refresh = false) =>
+    api.get('/openai/available-models', { params: refresh ? { refresh: '1' } : {} }),
 }
 
 // Cursor API
