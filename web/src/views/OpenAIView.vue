@@ -1101,9 +1101,11 @@ async function runImport() {
       for (const f of importFiles.value) {
         formData.append('files', f)
       }
+      const token = localStorage.getItem('easyllm_token')
       const fetchRes = await fetch('/api/v1/openai/import/token-files', {
         method: 'POST',
-        body: formData
+        body: formData,
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
       })
       if (!fetchRes.ok) {
         const errData = await fetchRes.json().catch(() => ({}))
