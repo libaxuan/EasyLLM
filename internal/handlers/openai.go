@@ -7,7 +7,6 @@ import (
 	"easyllm/internal/storage"
 	"encoding/json"
 	"fmt"
-	"io"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -35,20 +34,6 @@ type openaiOAuthSession struct {
 	CreatedAt    time.Time
 }
 
-// openaiModelsCache 缓存 OpenAI 官方 /v1/models 结果，避免频繁请求
-var (
-	openaiModelsCacheMu   sync.Mutex
-	openaiModelsCache     []openaiModelItem
-	openaiModelsCachedAt  time.Time
-	openaiModelsCacheTTL  = time.Hour
-)
-
-type openaiModelItem struct {
-	ID      string `json:"id"`
-	Object  string `json:"object"`
-	OwnedBy string `json:"owned_by"`
-	Created int64  `json:"created,omitempty"`
-}
 
 func NewOpenAIHandler(s *storage.OpenAIStorage, cs *storage.CodexStorage) *OpenAIHandler {
 	h := &OpenAIHandler{
@@ -94,6 +79,7 @@ func (h *OpenAIHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	g.POST("/import/token-files", h.ImportByTokenFiles)     // upload multiple JSON files
 	g.POST("/import/scan-dir", h.ImportByScanDir)           // scan local directory path
 	g.POST("/import/refresh-tokens", h.ImportByRefreshTokens) // legacy: refresh_token list
+	g.POST("/import/from-export", h.ImportFromExport)       // re-import from exported backup JSON (no API calls)
 
 	// OAuth flow
 	g.POST("/oauth/generate-url", h.GenerateOAuthURL)
@@ -122,8 +108,6 @@ func (h *OpenAIHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	g.GET("/service-config", h.GetServiceConfig)
 	g.PUT("/service-config", h.UpdateServiceConfig)
 
-	// OpenAI 官方模型列表（带缓存，避免频繁请求）
-	g.GET("/available-models", h.GetAvailableModels)
 }
 
 func (h *OpenAIHandler) ListAccounts(c *gin.Context) {
@@ -1229,6 +1213,182 @@ func (h *OpenAIHandler) ToggleProxyAll(c *gin.Context) {
 
 // ---- Quota ----
 
+// exportedOAuthAccount 是导出文件中 oauth_accounts 数组里每条记录的格式
+type exportedOAuthAccount struct {
+	Email            string `json:"email"`
+	RefreshToken     string `json:"refresh_token"`
+	AccessToken      string `json:"access_token"`
+	IDToken          string `json:"id_token"`
+	ChatGPTAccountID string `json:"chatgpt_account_id"`
+	ExpiresAt        string `json:"expires_at"`
+}
+
+// exportedAPIAccount 是导出文件中 api_accounts 数组里每条记录的格式
+type exportedAPIAccount struct {
+	ModelProvider        string `json:"model_provider"`
+	Model                string `json:"model"`
+	BaseURL              string `json:"base_url"`
+	APIKey               string `json:"api_key"`
+	WireAPI              string `json:"wire_api"`
+	ModelReasoningEffort string `json:"model_reasoning_effort"`
+	ProxyEnabled         bool   `json:"proxy_enabled"`
+}
+
+// ImportFromExport 直接从导出的备份 JSON 中重新导入所有账号，无需任何 OpenAI API 调用。
+// 支持导出文件中的 oauth_accounts 和 api_accounts 两类账号。
+func (h *OpenAIHandler) ImportFromExport(c *gin.Context) {
+	var payload struct {
+		OAuthAccounts []exportedOAuthAccount `json:"oauth_accounts"`
+		APIAccounts   []exportedAPIAccount   `json:"api_accounts"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, models.APIError{Error: "无效的请求体: " + err.Error(), Code: "INVALID_REQUEST"})
+		return
+	}
+
+	if len(payload.OAuthAccounts) == 0 && len(payload.APIAccounts) == 0 {
+		c.JSON(http.StatusBadRequest, models.APIError{Error: "备份文件中没有账号数据", Code: "EMPTY_INPUT"})
+		return
+	}
+
+	existingAccounts, _ := h.storage.List()
+
+	type result struct {
+		Email   string `json:"email"`
+		Success bool   `json:"success"`
+		Skipped bool   `json:"skipped,omitempty"`
+		Error   string `json:"error,omitempty"`
+	}
+	var results []result
+
+	now := time.Now()
+
+	// 导入 OAuth 账号
+	for _, a := range payload.OAuthAccounts {
+		if a.Email == "" && a.IDToken != "" {
+			if userInfo := openaiplatform.ParseIDToken(a.IDToken); userInfo != nil && userInfo.Email != nil {
+				a.Email = strings.TrimSpace(*userInfo.Email)
+			}
+		}
+		if a.Email == "" {
+			results = append(results, result{Email: "(unknown)", Success: false, Error: "缺少 email 字段"})
+			continue
+		}
+
+		// 重复检查
+		duplicate := false
+		for _, existing := range existingAccounts {
+			if strings.EqualFold(existing.Email, a.Email) {
+				existingAcctID := ""
+				if existing.ChatGPTAccountID != nil {
+					existingAcctID = *existing.ChatGPTAccountID
+				}
+				if a.ChatGPTAccountID == "" || existingAcctID == "" || a.ChatGPTAccountID == existingAcctID {
+					duplicate = true
+					break
+				}
+			}
+		}
+		if duplicate {
+			results = append(results, result{Email: a.Email, Success: false, Skipped: true, Error: "已存在"})
+			continue
+		}
+
+		var expiresAt *time.Time
+		if a.ExpiresAt != "" {
+			if t, err := time.Parse(time.RFC3339, a.ExpiresAt); err == nil {
+				expiresAt = &t
+			}
+		}
+
+		account := &models.OpenAIAccount{
+			ID:           uuid.New().String(),
+			Email:        a.Email,
+			AccountType:  models.OpenAIAccountTypeOAuth,
+			AccessToken:  sPtr(a.AccessToken),
+			RefreshToken: sPtr(a.RefreshToken),
+			ExpiresAt:    expiresAt,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}
+		if a.IDToken != "" {
+			account.IDToken = sPtr(a.IDToken)
+			if userInfo := openaiplatform.ParseIDToken(a.IDToken); userInfo != nil {
+				account.ChatGPTAccountID = userInfo.ChatGPTAccountID
+				account.ChatGPTUserID = userInfo.ChatGPTUserID
+				account.OrganizationID = userInfo.OrganizationID
+			}
+			if j := openaiplatform.ExtractOpenAIAuthJSON(a.IDToken); j != "" {
+				account.OpenAIAuthJSON = sPtr(j)
+			}
+		}
+		if a.ChatGPTAccountID != "" && account.ChatGPTAccountID == nil {
+			account.ChatGPTAccountID = sPtr(a.ChatGPTAccountID)
+		}
+
+		if err := h.storage.Save(account); err != nil {
+			results = append(results, result{Email: a.Email, Success: false, Error: err.Error()})
+			continue
+		}
+		existingAccounts = append(existingAccounts, *account)
+		results = append(results, result{Email: a.Email, Success: true})
+	}
+
+	// 导入 API 账号
+	for _, a := range payload.APIAccounts {
+		label := a.ModelProvider
+		if label == "" {
+			label = a.BaseURL
+		}
+		if a.APIKey == "" {
+			results = append(results, result{Email: label, Success: false, Error: "api_key 为空，跳过"})
+			continue
+		}
+		wireAPI := a.WireAPI
+		if wireAPI == "" {
+			wireAPI = "responses"
+		}
+		account := &models.OpenAIAccount{
+			ID:                   uuid.New().String(),
+			Email:                label,
+			AccountType:          models.OpenAIAccountTypeAPI,
+			ModelProvider:        sPtr(a.ModelProvider),
+			Model:                sPtr(a.Model),
+			BaseURL:              sPtr(a.BaseURL),
+			APIKey:               sPtr(a.APIKey),
+			WireAPI:              sPtr(wireAPI),
+			ModelReasoningEffort: sPtr(a.ModelReasoningEffort),
+			ProxyEnabled:         a.ProxyEnabled,
+			CreatedAt:            now,
+			UpdatedAt:            now,
+		}
+		if err := h.storage.Save(account); err != nil {
+			results = append(results, result{Email: label, Success: false, Error: err.Error()})
+			continue
+		}
+		results = append(results, result{Email: label, Success: true})
+	}
+
+	success, skipped, failed := 0, 0, 0
+	for _, r := range results {
+		if r.Success {
+			success++
+		} else if r.Skipped {
+			skipped++
+		} else {
+			failed++
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"total":   len(results),
+		"success": success,
+		"skipped": skipped,
+		"failed":  failed,
+		"results": results,
+	})
+}
+
 // FetchQuotas checks the quota for OAuth accounts by calling the ChatGPT
 // Codex Responses API (POST /codex/responses) and reading x-codex-* headers.
 // Returns percentage-based 5h/7d quota data. Results are persisted to the database.
@@ -1441,94 +1601,6 @@ func (h *OpenAIHandler) UpdateServiceConfig(c *gin.Context) {
 	}
 
 	h.GetServiceConfig(c)
-}
-
-// GetAvailableModels 返回 OpenAI 官方 https://api.openai.com/v1/models 的模型列表，带 1 小时缓存，减少频繁调用。
-func (h *OpenAIHandler) GetAvailableModels(c *gin.Context) {
-	forceRefresh := c.Query("refresh") == "1"
-
-	openaiModelsCacheMu.Lock()
-	valid := len(openaiModelsCache) > 0 && time.Since(openaiModelsCachedAt) < openaiModelsCacheTTL
-	openaiModelsCacheMu.Unlock()
-
-	if !forceRefresh && valid {
-		openaiModelsCacheMu.Lock()
-		list := make([]openaiModelItem, len(openaiModelsCache))
-		copy(list, openaiModelsCache)
-		at := openaiModelsCachedAt
-		openaiModelsCacheMu.Unlock()
-		c.JSON(http.StatusOK, gin.H{"data": list, "cached_at": at.Format(time.RFC3339)})
-		return
-	}
-
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		accounts, err := h.storage.List()
-		if err == nil {
-			for _, a := range accounts {
-				if a.AccountType == models.OpenAIAccountTypeAPI && a.APIKey != nil && *a.APIKey != "" {
-					base := ""
-					if a.BaseURL != nil {
-						base = *a.BaseURL
-					}
-					if strings.Contains(base, "openai.com") {
-						apiKey = *a.APIKey
-						break
-					}
-				}
-			}
-		}
-	}
-
-	if apiKey == "" {
-		c.JSON(http.StatusOK, gin.H{
-			"data":      []openaiModelItem{},
-			"cached_at": time.Now().Format(time.RFC3339),
-			"message":   "未配置 OPENAI_API_KEY 或未添加 OpenAI 官方 API 账号，无法拉取模型列表",
-		})
-		return
-	}
-
-	req, err := http.NewRequest(http.MethodGet, "https://api.openai.com/v1/models", nil)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.APIError{Error: err.Error(), Code: "REQUEST_ERROR"})
-		return
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.APIError{Error: err.Error(), Code: "NETWORK_ERROR"})
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		c.JSON(resp.StatusCode, models.APIError{
-			Error: fmt.Sprintf("OpenAI API 返回 %d: %s", resp.StatusCode, string(body)),
-			Code:  "OPENAI_ERROR",
-		})
-		return
-	}
-
-	var payload struct {
-		Data []openaiModelItem `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		c.JSON(http.StatusInternalServerError, models.APIError{Error: err.Error(), Code: "DECODE_ERROR"})
-		return
-	}
-
-	openaiModelsCacheMu.Lock()
-	openaiModelsCache = payload.Data
-	openaiModelsCachedAt = time.Now()
-	openaiModelsCacheMu.Unlock()
-
-	c.JSON(http.StatusOK, gin.H{
-		"data":      payload.Data,
-		"cached_at": openaiModelsCachedAt.Format(time.RFC3339),
-	})
 }
 
 // ---- helpers ----

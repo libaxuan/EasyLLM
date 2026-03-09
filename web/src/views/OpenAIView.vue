@@ -420,6 +420,39 @@
             </div>
           </div>
 
+          <!-- Mode 4: Re-import from exported backup JSON -->
+          <div v-if="importMode === 'from-export'">
+            <div class="bg-purple-900/20 border border-purple-700/40 rounded-lg p-3 text-xs text-purple-300 mb-3">
+              📦 直接导入由「服务配置 → 导出账号」生成的备份文件（无需任何 OpenAI API 调用，速度最快）
+            </div>
+            <div v-if="!importBackupFile">
+              <input ref="importBackupFileInput" type="file" accept=".json" class="hidden" @change="handleBackupFileSelect"/>
+              <div
+                @click="$refs.importBackupFileInput.click()"
+                class="border-2 border-dashed border-gray-600 rounded-xl p-8 text-center cursor-pointer hover:border-purple-500 hover:bg-purple-900/10 transition-colors"
+              >
+                <svg class="w-10 h-10 mx-auto mb-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                </svg>
+                <p class="text-gray-400 text-sm">点击上传 easyllm-accounts-*.json 备份文件</p>
+                <p class="text-xs text-gray-600 mt-1">仅支持「导出账号」生成的文件</p>
+              </div>
+            </div>
+            <div v-else class="space-y-2">
+              <div class="flex items-center justify-between">
+                <div class="text-sm text-gray-300">
+                  已解析备份：
+                  <span class="text-white font-medium">{{ importBackupFile.oauth_accounts?.length ?? 0 }}</span> 个 OAuth 账号，
+                  <span class="text-white font-medium">{{ importBackupFile.api_accounts?.length ?? 0 }}</span> 个 API 账号
+                </div>
+                <button @click="importBackupFile = null; importResults = null" class="text-xs text-gray-500 hover:text-red-400">重新选择</button>
+              </div>
+              <div v-if="importBackupFile.exported_at" class="text-xs text-gray-500">
+                备份时间：{{ new Date(importBackupFile.exported_at).toLocaleString() }}
+              </div>
+            </div>
+          </div>
+
           <!-- Import progress/results -->
           <div v-if="importing" class="flex items-center gap-3 text-sm text-blue-300">
             <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -780,12 +813,15 @@ const importFiles = ref([])
 const importResults = ref(null)
 const fileInput = ref(null)
 const multiFileInput = ref(null)
-const importMode = ref('token-files') // 'token-files' | 'scan-dir' | 'refresh-tokens'
+const importMode = ref('token-files') // 'token-files' | 'scan-dir' | 'refresh-tokens' | 'from-export'
+const importBackupFile = ref(null)  // 从备份导入用的解析后的 JSON 对象
+const importBackupFileInput = ref(null)
 const scanDir = ref('./auth')
 const importModes = [
-  { id: 'token-files', label: '⚡ Token文件（最快）' },
-  { id: 'scan-dir',    label: '🗂 扫描目录' },
+  { id: 'token-files',  label: '⚡ Token文件' },
+  { id: 'scan-dir',     label: '🗂 扫描目录' },
   { id: 'refresh-tokens', label: '🔄 refresh_token' },
+  { id: 'from-export',  label: '📦 从备份导入' },
 ]
 
 // OAuth dialog
@@ -1047,6 +1083,7 @@ const canRunImport = computed(() => {
   if (importMode.value === 'token-files') return importFiles.value.length > 0
   if (importMode.value === 'scan-dir') return scanDir.value.trim().length > 0
   if (importMode.value === 'refresh-tokens') return importTokens.value.length > 0
+  if (importMode.value === 'from-export') return !!importBackupFile.value
   return false
 })
 
@@ -1054,6 +1091,10 @@ const importButtonLabel = computed(() => {
   if (importMode.value === 'token-files') return `导入 ${importFiles.value.length} 个文件`
   if (importMode.value === 'scan-dir') return `扫描并导入目录`
   if (importMode.value === 'refresh-tokens') return `导入 ${importTokens.value.length} 个账号`
+  if (importMode.value === 'from-export') {
+    const total = (importBackupFile.value?.oauth_accounts?.length ?? 0) + (importBackupFile.value?.api_accounts?.length ?? 0)
+    return `从备份导入 ${total} 个账号`
+  }
   return '导入'
 })
 
@@ -1062,6 +1103,27 @@ function handleMultiFileSelect(event) {
   if (!files.length) return
   importFiles.value = files
   importResults.value = null
+  event.target.value = ''
+}
+
+function handleBackupFileSelect(event) {
+  const file = event.target.files?.[0]
+  if (!file) return
+  const reader = new FileReader()
+  reader.onload = (e) => {
+    try {
+      const data = JSON.parse(e.target.result)
+      if (!data.oauth_accounts && !data.api_accounts) {
+        showToast('文件格式不正确，请上传由"导出账号"生成的备份文件', 'error')
+        return
+      }
+      importBackupFile.value = data
+      importResults.value = null
+    } catch (err) {
+      showToast('文件解析失败: ' + err.message, 'error')
+    }
+  }
+  reader.readAsText(file)
   event.target.value = ''
 }
 
@@ -1131,6 +1193,20 @@ async function runImport() {
         results: res?.results ?? []
       }
 
+    } else if (importMode.value === 'from-export') {
+      // 直接消费备份 JSON，无需 API 调用
+      res = await api.post('/openai/import/from-export', {
+        oauth_accounts: importBackupFile.value.oauth_accounts || [],
+        api_accounts:   importBackupFile.value.api_accounts   || [],
+      })
+      importResults.value = {
+        success: res?.success ?? 0,
+        skipped: res?.skipped ?? 0,
+        failed:  res?.failed  ?? 0,
+        total:   res?.total   ?? 0,
+        results: res?.results ?? []
+      }
+
     } else {
       // Legacy: refresh_token list requires OpenAI API calls
       res = await api.post('/openai/import/refresh-tokens', {
@@ -1167,6 +1243,7 @@ function closeImportDialog() {
   showImportDialog.value = false
   importTokens.value = []
   importFiles.value = []
+  importBackupFile.value = null
   importResults.value = null
 }
 
@@ -1277,18 +1354,17 @@ async function openServiceConfig() {
 }
 
 function exportAccounts() {
-  const oauthList = oauthAccounts.value.map(a => ({
-    email: a.email,
-    refresh_token: a.refresh_token || '',
-    access_token: a.access_token || '',
-    id_token: a.id_token || '',
-    chatgpt_account_id: a.chatgpt_account_id || '',
-  }))
   const payload = {
     exported_at: new Date().toISOString(),
-    _usage: '换设备后：OAuth 用 refresh_tokens 数组批量导入；API 用 api_accounts 逐条添加。请妥善保管此文件。',
-    refresh_tokens: oauthList.map(a => a.refresh_token).filter(Boolean),
-    oauth_accounts: oauthList,
+    _usage: '恢复时：在"批量导入 → 从备份导入"中上传此文件即可一键恢复所有账号，无需任何 API 调用。请妥善保管此文件。',
+    oauth_accounts: oauthAccounts.value.map(a => ({
+      email: a.email || '',
+      refresh_token: a.refresh_token || '',
+      access_token: a.access_token || '',
+      id_token: a.id_token || '',
+      chatgpt_account_id: a.chatgpt_account_id || '',
+      expires_at: a.expires_at || '',
+    })),
     api_accounts: apiAccounts.value.map(a => ({
       model_provider: a.model_provider || '',
       model: a.model || '',
@@ -1306,7 +1382,7 @@ function exportAccounts() {
   a.download = `easyllm-accounts-${new Date().toISOString().slice(0, 10)}.json`
   a.click()
   URL.revokeObjectURL(url)
-  showToast('账号已导出，请妥善保管', 'success')
+  showToast(`已导出 ${payload.oauth_accounts.length} 个 OAuth + ${payload.api_accounts.length} 个 API 账号，请妥善保管`, 'success')
 }
 
 async function toggleServiceProxyPool() {

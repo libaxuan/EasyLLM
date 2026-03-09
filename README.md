@@ -61,11 +61,34 @@ docker compose up -d
 
 访问 http://localhost:8021
 
-### 方式三：构建脚本
+### 方式三：一键启动脚本（推荐）
 
+自动检测并释放被占用的端口，无需手动杀进程：
+
+**Mac / Linux**
 ```bash
-./scripts/build.sh
-./easyllm
+# 开发模式（go run，无需预编译）
+./scripts/start.sh
+
+# 先编译前端+后端再运行
+./scripts/start.sh --build
+
+# 直接运行已编译的二进制（需提前 --build）
+./scripts/start.sh --prod
+```
+
+**Windows (PowerShell)**
+```powershell
+.\scripts\start.ps1          # 开发模式
+.\scripts\start.ps1 --build  # 编译后运行
+.\scripts\start.ps1 --prod   # 运行二进制
+```
+
+**Windows (CMD)**
+```bat
+scripts\start.bat
+scripts\start.bat --build
+scripts\start.bat --prod
 ```
 
 ## 配置
