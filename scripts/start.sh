@@ -41,19 +41,60 @@ echo -e "  端口  : ${YELLOW}${PORT}${RESET}"
 echo -e "  根目录: ${ROOT_DIR}"
 echo ""
 
+# ── 禁用已知会抢占端口的系统代理服务 ────────────────────────────────────────
+disable_conflicting_services() {
+  # LVSecurityAgent 的 manageproxy 组件会占用 8021，需要在启动前阻止
+  local proxy_plist="/Library/LaunchAgents/com.lvmagent.manageproxy.plist"
+  if [ -f "${proxy_plist}" ]; then
+    local svc_label="com.lvmagent.manageproxy"
+    # 禁用（防止重启后自动加载）
+    launchctl disable "gui/$(id -u)/${svc_label}" 2>/dev/null || true
+    # 卸载当前会话中的服务
+    launchctl unload "${proxy_plist}" 2>/dev/null || true
+    # 杀掉进程（包括可能的孤儿进程）
+    pkill -9 -f "dvc-manageproxy-exe" 2>/dev/null || true
+    echo -e "${YELLOW}⚠  已停止系统代理服务 (${svc_label})${RESET}"
+    sleep 1
+  fi
+}
+
 # ── 杀占用端口的进程 ──────────────────────────────────────────────────────────
 kill_port() {
-  local pids
-  # lsof 在 Mac/Linux 均可用
-  pids=$(lsof -ti :"${PORT}" 2>/dev/null || true)
+  local pids any_killed=0
+
+  # 1. 杀所有持有该端口的进程（含 go run 父进程和编译后的子进程）
+  pids=$(lsof -ti TCP:"${PORT}" 2>/dev/null || true)
   if [ -n "${pids}" ]; then
     echo -e "${YELLOW}⚠  端口 ${PORT} 被占用 (PID: $(echo $pids | tr '\n' ' '))，正在终止...${RESET}"
     echo "${pids}" | xargs kill -9 2>/dev/null || true
-    sleep 1
-    echo -e "${GREEN}✓  端口 ${PORT} 已释放${RESET}"
-  else
-    echo -e "${GREEN}✓  端口 ${PORT} 空闲${RESET}"
+    any_killed=1
   fi
+
+  # 2. 额外杀掉 go run main.go 及其衍生的 easyllm 编译产物（孤儿进程）
+  pkill -9 -f "easyllm" 2>/dev/null && any_killed=1 || true
+  pkill -9 -f "go-build.*easyllm" 2>/dev/null || true
+
+  if [ "${any_killed}" -eq 1 ]; then
+    sleep 1  # 等待端口完全释放
+  fi
+
+  # 3. 确认端口已释放（检测仍有 ghost socket 时给出提示）
+  local can_bind=0
+  python3 -c "
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+try:
+    s.bind(('0.0.0.0', ${PORT})); s.listen(1); s.close(); exit(0)
+except: exit(1)
+" 2>/dev/null && can_bind=1 || can_bind=0
+
+  if [ "${can_bind}" -eq 0 ]; then
+    echo -e "${RED}✗  端口 ${PORT} 仍被系统内核 socket 占用（ghost socket）${RESET}"
+    echo -e "${YELLOW}   解决方案：重启 Mac 后重新运行此脚本${RESET}"
+    exit 1
+  fi
+  echo -e "${GREEN}✓  端口 ${PORT} 已释放${RESET}"
 }
 
 # ── 加载 .env ─────────────────────────────────────────────────────────────────
@@ -103,6 +144,7 @@ print_info() {
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
+disable_conflicting_services
 kill_port
 load_env
 

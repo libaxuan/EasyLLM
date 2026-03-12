@@ -10,7 +10,7 @@ export default defineConfig({
     }
   },
   server: {
-    // 开发时前端单独端口，避免与正式服务 8021 混淆；正式使用只开 go run main.go，访问 8021 即可
+    // 开发时前端单独端口；正式使用只开 go run main.go，访问 8026 即可（8021 被系统代理服务占用）
     port: 8022,
     proxy: {
       '/api': {
